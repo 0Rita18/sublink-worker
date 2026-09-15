@@ -1,7 +1,7 @@
 
 import { SING_BOX_CONFIG, generateRuleSets, generateRules, getOutbounds, PREDEFINED_RULE_SETS, DIRECT_DEFAULT_RULES, REJECT_ACTION_RULES } from '../config/index.js';
 import { BaseConfigBuilder } from './BaseConfigBuilder.js';
-import { deepCopy, groupProxiesByCountry } from '../utils.js';
+import { deepCopy, groupProxiesByCountry, parseCountryFromNodeName } from '../utils.js';
 import { addProxyWithDedup } from './helpers/proxyHelpers.js';
 import { buildSelectorMembers as buildSelectorMemberList, buildNodeSelectMembers, buildCustomRuleMembers, uniqueNames } from './helpers/groupBuilder.js';
 import { normalizeGroupName } from './helpers/groupNameUtils.js';
@@ -96,36 +96,39 @@ export class SingboxConfigBuilder extends BaseConfigBuilder {
         return proxy.tag;
     }
 
-    convertProxy(proxy) {
-        // Create a shallow copy to avoid mutating the original
-        const sanitized = { ...proxy };
+  convertProxy(proxy) {
+    // Create a shallow copy to avoid mutating the original
+    const sanitized = { ...proxy };
 
-        // Strip Clash-only / mis-typed fields that conflict with sing-box semantics.
-        // `udp` is Clash-only. Top-level `network` in sing-box is a TCP/UDP allowlist
-        // (NetworkList in option/types.go); a stray "tcp" silently disables UDP for
-        // every group that selects this node — including DNS hijack and fakeip.
-        delete sanitized.udp;
-        delete sanitized.network;
+    // Add country flag to node name
+    const country = parseCountryFromNodeName(sanitized.tag);
 
-        // Remove 'alpn' from root level - it should only exist inside 'tls' object for sing-box
-        // For protocols like vless/vmess, alpn belongs inside the tls configuration
-        if (sanitized.alpn && sanitized.tls) {
-            // Move alpn into tls if tls exists and doesn't have alpn
-            if (!sanitized.tls.alpn) {
-                sanitized.tls = { ...sanitized.tls, alpn: sanitized.alpn };
-            }
-            delete sanitized.alpn;
-        } else if (sanitized.alpn && !sanitized.tls) {
-            // No TLS, remove alpn entirely
-            delete sanitized.alpn;
-        }
-
-        // Remove packet_encoding for now - it's version-specific in sing-box
-        // xudp is default in newer versions
-        delete sanitized.packet_encoding;
-
-        return sanitized;
+    if (country?.emoji && sanitized.tag && !sanitized.tag.startsWith(country.emoji)) {
+        sanitized.tag = ${country.emoji} ${sanitized.tag};
     }
+
+    // Strip Clash-only / mis-typed fields that conflict with sing-box semantics.
+    // udp is Clash-only. Top-level network in sing-box is a TCP/UDP allowlist
+    // (NetworkList in option/types.go); a stray "tcp" silently disables UDP for
+    // every group that selects this node — including DNS hijack and fakeip.
+    delete sanitized.udp;
+    delete sanitized.network;
+
+    // Remove 'alpn' from root level - it should only exist inside 'tls' object for sing-box
+    if (sanitized.alpn && sanitized.tls) {
+        if (!sanitized.tls.alpn) {
+            sanitized.tls = { ...sanitized.tls, alpn: sanitized.alpn };
+        }
+        delete sanitized.alpn;
+    } else if (sanitized.alpn && !sanitized.tls) {
+        delete sanitized.alpn;
+    }
+
+    // Remove packet_encoding for now - it's version-specific in sing-box
+    delete sanitized.packet_encoding;
+
+    return sanitized;
+}
 
     addProxyToConfig(proxy) {
         this.config.outbounds = this.config.outbounds || [];
